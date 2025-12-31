@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"io/fs"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"os"
 
 	"github.com/Jack4Code/bedrock"
+	"github.com/Jack4Code/bedrock/config"
 	"github.com/Jack4Code/cardforge/internal/claude"
 	"github.com/Jack4Code/cardforge/internal/handlers"
 	"github.com/Jack4Code/cardforge/internal/storage"
@@ -15,6 +17,113 @@ import (
 
 //go:embed web/dist/*
 var frontendFS embed.FS
+
+// CardForgeApp implements the bedrock.App interface
+type CardForgeApp struct {
+	handler *handlers.Handler
+	staticFS http.Handler
+}
+
+func (a *CardForgeApp) OnStart(ctx context.Context) error {
+	log.Println("CardForge starting...")
+	return nil
+}
+
+func (a *CardForgeApp) OnStop(ctx context.Context) error {
+	log.Println("CardForge stopping...")
+	return nil
+}
+
+func (a *CardForgeApp) Routes() []bedrock.Route {
+	return []bedrock.Route{
+		// API routes
+		{
+			Method: "POST",
+			Path:   "/api/generate",
+			Handler: adaptHandler(a.handler.GenerateCards),
+		},
+		{
+			Method: "GET",
+			Path:   "/api/cards",
+			Handler: adaptHandler(a.handler.ListCards),
+		},
+		{
+			Method: "POST",
+			Path:   "/api/cards",
+			Handler: adaptHandler(a.handler.SaveCards),
+		},
+		{
+			Method: "PUT",
+			Path:   "/api/cards/:id",
+			Handler: adaptHandler(a.handler.UpdateCard),
+		},
+		{
+			Method: "DELETE",
+			Path:   "/api/cards/:id",
+			Handler: adaptHandler(a.handler.DeleteCard),
+		},
+		{
+			Method: "GET",
+			Path:   "/api/sessions",
+			Handler: adaptHandler(a.handler.ListSessions),
+		},
+		{
+			Method: "GET",
+			Path:   "/api/sessions/:id",
+			Handler: adaptHandler(a.handler.GetSession),
+		},
+		{
+			Method: "GET",
+			Path:   "/api/export",
+			Handler: adaptHandler(a.handler.ExportCards),
+		},
+		// Health check
+		{
+			Method: "GET",
+			Path:   "/health",
+			Handler: func(ctx context.Context, r *http.Request) bedrock.Response {
+				return bedrock.JSON(http.StatusOK, map[string]string{"status": "ok"})
+			},
+		},
+		// Static files (catch-all)
+		{
+			Method: "GET",
+			Path:   "/*",
+			Handler: func(ctx context.Context, r *http.Request) bedrock.Response {
+				return &staticResponse{handler: a.staticFS, request: r}
+			},
+		},
+	}
+}
+
+// adaptHandler converts http.HandlerFunc to bedrock.Handler
+func adaptHandler(h http.HandlerFunc) bedrock.Handler {
+	return func(ctx context.Context, r *http.Request) bedrock.Response {
+		return &handlerResponse{handler: h, request: r}
+	}
+}
+
+// handlerResponse wraps an http.HandlerFunc as a bedrock.Response
+type handlerResponse struct {
+	handler http.HandlerFunc
+	request *http.Request
+}
+
+func (hr *handlerResponse) Write(ctx context.Context, w http.ResponseWriter) error {
+	hr.handler(w, hr.request)
+	return nil
+}
+
+// staticResponse wraps a static file handler
+type staticResponse struct {
+	handler http.Handler
+	request *http.Request
+}
+
+func (sr *staticResponse) Write(ctx context.Context, w http.ResponseWriter) error {
+	sr.handler.ServeHTTP(w, sr.request)
+	return nil
+}
 
 func main() {
 	// Load configuration from environment
@@ -49,40 +158,26 @@ func main() {
 	// Initialize handlers
 	h := handlers.NewHandler(db, claudeClient)
 
-	// Initialize Bedrock app
-	app := bedrock.New()
-
-	// Add middleware
-	app.Use(bedrock.CORS())
-	app.Use(bedrock.Logger())
-	app.Use(bedrock.Recovery())
-
-	// API routes
-	app.POST("/api/generate", h.GenerateCards)
-	app.GET("/api/cards", h.ListCards)
-	app.POST("/api/cards", h.SaveCards)
-	app.PUT("/api/cards/:id", h.UpdateCard)
-	app.DELETE("/api/cards/:id", h.DeleteCard)
-	app.GET("/api/sessions", h.ListSessions)
-	app.GET("/api/sessions/:id", h.GetSession)
-	app.GET("/api/export", h.ExportCards)
-
-	// Health check endpoint
-	app.GET("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
-
 	// Serve static frontend (embedded assets)
 	staticFS, err := fs.Sub(frontendFS, "web/dist")
 	if err != nil {
 		log.Fatalf("Failed to get frontend filesystem: %v", err)
 	}
-	app.Static("/", http.FileServer(http.FS(staticFS)))
 
-	// Start server
+	// Create Bedrock app
+	app := &CardForgeApp{
+		handler:  h,
+		staticFS: http.FileServer(http.FS(staticFS)),
+	}
+
+	// Create config
+	cfg := config.BaseConfig{
+		Port: port,
+	}
+
+	// Start server with default CORS
 	log.Printf("Starting CardForge server on :%s", port)
-	if err := app.Run(":" + port); err != nil {
+	if err := bedrock.Run(app, cfg); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }
