@@ -17,7 +17,7 @@ CardForge is a web application that takes conversation transcripts and uses Clau
 - **Framework**: [Bedrock v0.0.5](https://github.com/Jack4Code/bedrock)
 - **Database**: SQLite
 - **AI**: Anthropic Claude API (Sonnet 4.5)
-- **Language**: Go 1.25
+- **Language**: Go 1.23
 
 ### Frontend
 - **Framework**: React with Vite
@@ -26,7 +26,7 @@ CardForge is a web application that takes conversation transcripts and uses Clau
 
 ## Prerequisites
 
-- Go 1.25+
+- Go 1.23+
 - Node.js 18+
 - Anthropic API key ([get one here](https://console.anthropic.com/))
 

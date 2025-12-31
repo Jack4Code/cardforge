@@ -1,26 +1,66 @@
 package claude
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
-
-	"github.com/anthropic-ai/anthropic-sdk-go"
-	"github.com/anthropic-ai/anthropic-sdk-go/option"
 
 	"github.com/Jack4Code/cardforge/internal/models"
 )
 
+const (
+	apiURL      = "https://api.anthropic.com/v1/messages"
+	apiVersion  = "2023-06-01"
+	modelSonnet = "claude-sonnet-4-5-20250929"
+)
+
 // Client wraps the Anthropic Claude API client
 type Client struct {
-	client *anthropic.Client
+	apiKey     string
+	httpClient *http.Client
 }
 
 // NewClient creates a new Claude API client
 func NewClient(apiKey string) *Client {
-	client := anthropic.NewClient(option.WithAPIKey(apiKey))
-	return &Client{client: client}
+	return &Client{
+		apiKey:     apiKey,
+		httpClient: &http.Client{},
+	}
+}
+
+// API request/response structures
+type messageRequest struct {
+	Model     string    `json:"model"`
+	MaxTokens int       `json:"max_tokens"`
+	Messages  []message `json:"messages"`
+}
+
+type message struct {
+	Role    string         `json:"role"`
+	Content []contentBlock `json:"content"`
+}
+
+type contentBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type messageResponse struct {
+	ID      string         `json:"id"`
+	Type    string         `json:"type"`
+	Role    string         `json:"role"`
+	Content []contentBlock `json:"content"`
+	Model   string         `json:"model"`
+	Error   *apiError      `json:"error,omitempty"`
+}
+
+type apiError struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
 }
 
 // GeneratedCard represents a card from Claude's response
@@ -47,22 +87,74 @@ func (c *Client) GenerateCards(ctx context.Context, conversation string, options
 	// Build the prompt
 	prompt := c.buildPrompt(conversation, options)
 
-	// Call Claude API
-	message, err := c.client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.F(anthropic.ModelClaude_4_5_Sonnet_20250929),
-		MaxTokens: anthropic.Int(16000),
-		Messages: anthropic.F([]anthropic.MessageParam{
-			anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
-		}),
-	})
+	// Create API request
+	reqBody := messageRequest{
+		Model:     modelSonnet,
+		MaxTokens: 16000,
+		Messages: []message{
+			{
+				Role: "user",
+				Content: []contentBlock{
+					{
+						Type: "text",
+						Text: prompt,
+					},
+				},
+			},
+		},
+	}
+
+	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("claude api error: %w", err)
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", c.apiKey)
+	req.Header.Set("anthropic-version", apiVersion)
+
+	// Make the request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check for HTTP errors
+	if resp.StatusCode != http.StatusOK {
+		var errResp messageResponse
+		if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error != nil {
+			return nil, fmt.Errorf("claude api error: %s - %s", errResp.Error.Type, errResp.Error.Message)
+		}
+		return nil, fmt.Errorf("claude api error: status %d - %s", resp.StatusCode, string(body))
+	}
+
+	// Parse response
+	var apiResp messageResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if apiResp.Error != nil {
+		return nil, fmt.Errorf("claude api error: %s - %s", apiResp.Error.Type, apiResp.Error.Message)
 	}
 
 	// Extract text from response
 	var responseText string
-	for _, block := range message.Content {
-		if block.Type == anthropic.ContentBlockTypeText {
+	for _, block := range apiResp.Content {
+		if block.Type == "text" {
 			responseText = block.Text
 			break
 		}
