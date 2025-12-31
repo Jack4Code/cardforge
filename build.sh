@@ -14,7 +14,7 @@ echo ""
 
 # Build Go binary
 echo "🚀 Building Go binary..."
-go build -ldflags="-s -w" -o cardforge cmd/server/main.go
+go build -ldflags="-s -w" -o cardforge main.go
 echo "✅ Binary built successfully"
 echo ""
 

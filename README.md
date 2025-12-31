@@ -65,7 +65,7 @@ cd ..
 
 **Terminal 1 - Backend:**
 ```bash
-go run cmd/server/main.go
+go run main.go
 ```
 
 **Terminal 2 - Frontend:**
@@ -85,7 +85,7 @@ npm run build
 cd ..
 
 # Build Go binary with embedded assets
-go build -o cardforge cmd/server/main.go
+go build -o cardforge main.go
 
 # Run the binary
 ./cardforge
@@ -142,9 +142,7 @@ ENV=development
 
 ```
 cardforge/
-├── cmd/
-│   └── server/
-│       └── main.go              # Application entry point
+├── main.go                      # Application entry point
 ├── internal/
 │   ├── handlers/                # HTTP request handlers
 │   │   └── handlers.go
@@ -163,13 +161,14 @@ cardforge/
 │   │   │   └── ExportButton.jsx
 │   │   ├── App.jsx
 │   │   └── main.jsx
-│   ├── public/
+│   ├── dist/                    # Built frontend (generated)
 │   ├── index.html
 │   ├── package.json
 │   ├── vite.config.js
 │   └── tailwind.config.js
 ├── migrations/
 │   └── 001_initial_schema.sql   # Database schema
+├── build.sh                     # Production build script
 ├── go.mod
 ├── go.sum
 ├── README.md
