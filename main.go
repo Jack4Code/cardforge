@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/Jack4Code/bedrock"
 	"github.com/Jack4Code/bedrock/config"
@@ -137,9 +138,11 @@ func main() {
 		dbPath = "./cardforge.db"
 	}
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	httpPort := 8080
+	if portStr := os.Getenv("PORT"); portStr != "" {
+		if p, err := strconv.Atoi(portStr); err == nil {
+			httpPort = p
+		}
 	}
 
 	// Initialize database
@@ -172,11 +175,11 @@ func main() {
 
 	// Create config
 	cfg := config.BaseConfig{
-		Port: port,
+		HTTPPort: httpPort,
 	}
 
 	// Start server with default CORS
-	log.Printf("Starting CardForge server on :%s", port)
+	log.Printf("Starting CardForge server on :%d", httpPort)
 	if err := bedrock.Run(app, cfg); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
