@@ -14,9 +14,9 @@ CardForge is a web application that takes conversation transcripts and uses Clau
 ## Technology Stack
 
 ### Backend
-- **Framework**: [Bedrock v0.0.5](https://github.com/Jack4Code/bedrock)
+- **Framework**: Go standard library (net/http)
 - **Database**: SQLite
-- **AI**: Anthropic Claude API (Sonnet 4.5)
+- **AI**: Anthropic Claude API (Sonnet 4.5) via direct HTTP
 - **Language**: Go 1.23
 
 ### Frontend

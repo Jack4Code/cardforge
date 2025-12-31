@@ -6,8 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
-	"github.com/Jack4Code/bedrock"
 	"github.com/Jack4Code/cardforge/internal/claude"
 	"github.com/Jack4Code/cardforge/internal/handlers"
 	"github.com/Jack4Code/cardforge/internal/storage"
@@ -49,26 +49,19 @@ func main() {
 	// Initialize handlers
 	h := handlers.NewHandler(db, claudeClient)
 
-	// Initialize Bedrock app
-	app := bedrock.New()
-
-	// Add middleware
-	app.Use(bedrock.CORS())
-	app.Use(bedrock.Logger())
-	app.Use(bedrock.Recovery())
+	// Create router
+	mux := http.NewServeMux()
 
 	// API routes
-	app.POST("/api/generate", h.GenerateCards)
-	app.GET("/api/cards", h.ListCards)
-	app.POST("/api/cards", h.SaveCards)
-	app.PUT("/api/cards/:id", h.UpdateCard)
-	app.DELETE("/api/cards/:id", h.DeleteCard)
-	app.GET("/api/sessions", h.ListSessions)
-	app.GET("/api/sessions/:id", h.GetSession)
-	app.GET("/api/export", h.ExportCards)
+	mux.HandleFunc("/api/generate", h.GenerateCards)
+	mux.HandleFunc("/api/cards", handleCards(h))
+	mux.HandleFunc("/api/cards/", handleCardWithID(h))
+	mux.HandleFunc("/api/sessions", handleSessions(h))
+	mux.HandleFunc("/api/sessions/", handleSessionWithID(h))
+	mux.HandleFunc("/api/export", h.ExportCards)
 
 	// Health check endpoint
-	app.GET("/health", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
@@ -78,11 +71,136 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to get frontend filesystem: %v", err)
 	}
-	app.Use("/", http.FileServer(http.FS(staticFS)))
+	mux.Handle("/", http.FileServer(http.FS(staticFS)))
+
+	// Apply middleware
+	handler := corsMiddleware(loggerMiddleware(recoveryMiddleware(mux)))
+
+	// Create server
+	server := &http.Server{
+		Addr:         ":" + port,
+		Handler:      handler,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
 
 	// Start server
 	log.Printf("Starting CardForge server on :%s", port)
-	if err := app.Run(":" + port); err != nil {
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
+}
+
+// handleCards routes /api/cards based on method
+func handleCards(h *handlers.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			h.ListCards(w, r)
+		case http.MethodPost:
+			h.SaveCards(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+// handleCardWithID routes /api/cards/:id based on method
+func handleCardWithID(h *handlers.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			h.UpdateCard(w, r)
+		case http.MethodDelete:
+			h.DeleteCard(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+// handleSessions routes /api/sessions based on method
+func handleSessions(h *handlers.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			h.ListSessions(w, r)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+// handleSessionWithID routes /api/sessions/:id based on method
+func handleSessionWithID(h *handlers.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			h.GetSession(w, r)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+// Middleware functions
+
+// corsMiddleware adds CORS headers
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// loggerMiddleware logs HTTP requests
+func loggerMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+
+		// Create a response writer wrapper to capture status code
+		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+
+		next.ServeHTTP(wrapped, r)
+
+		log.Printf(
+			"%s %s %d %s",
+			r.Method,
+			r.RequestURI,
+			wrapped.statusCode,
+			time.Since(start),
+		)
+	})
+}
+
+// recoveryMiddleware recovers from panics
+func recoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Printf("Panic recovered: %v", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+			}
+		}()
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// responseWriter wraps http.ResponseWriter to capture status code
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
 }
