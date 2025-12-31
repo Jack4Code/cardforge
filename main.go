@@ -13,7 +13,7 @@ import (
 	"github.com/Jack4Code/cardforge/internal/storage"
 )
 
-//go:embed all:web/dist
+//go:embed web/dist
 var frontendFS embed.FS
 
 func main() {
